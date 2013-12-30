@@ -85,7 +85,7 @@ $(EXECUTABLE).opt: $(MODULES:%=%.cmx)
 	$(OCAMLLEX) $*.mll
 
 clean:
-	rm -f $(EXECUTABLE) $(EXECUTABLE).opt parsing/parser.ml parsing/lexer.ml *.cm[iox] **/*.cm[iox] **/*.o *.annot **/*.annot
+	rm -f $(EXECUTABLE) $(EXECUTABLE).opt parsing/parser.ml parsing/lexer.ml *.cm[iox] **/*.cm[iox] **/*.o **/*.annot
 
 .depend: $(GENERATED) Makefile
 	$(OCAMLDEP) $(SRC_INCLUDES) $(patsubst %, %.ml, $(MODULES)) \
