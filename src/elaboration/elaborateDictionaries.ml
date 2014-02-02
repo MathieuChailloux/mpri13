@@ -24,13 +24,27 @@ and block env = function
     ([BDefinition d], env)
 
   | BClassDefinition c ->
-    (** Class definitions are ignored. Student! This is your job! *)
-    ([], env)
+    let env = class_definition env c in
+    ([BClassDefinition c], env)
 
   | BInstanceDefinitions is ->
-    (** Instance definitions are ignored. Student! This is your job! *)
-    ([], env)
+    let env = instance_definitions env is in
+    ([BInstanceDefinitions is], env)
 
+and class_definition env c =
+  Format.printf "Defining class %s\n" (match c with {class_name=TName name} -> name);
+  bind_class c.class_name c env
+
+and instance_definitions env is =
+  List.fold_left instance_definition env is
+
+and instance_definition env i =
+  let i_class = lookup_class i.instance_position i.instance_class_name env in
+  (*Format.printf "Instanciating class %s\n" (match i_class with {class_name=TName name} -> name);
+  Format.printf "\t with index %s\n" (match i.instance_index with TName name -> name);*)
+  List.fold_left (fun acc (_, LName name, ty) ->
+    bind_scheme (Name name) i.instance_parameters ty acc) env i_class.class_members
+					    
 and type_definitions env (TypeDefs (_, tdefs)) =
   let env = List.fold_left env_of_type_definition env tdefs in
   List.fold_left type_definition env tdefs
@@ -115,7 +129,7 @@ and type_application pos env x tys =
   let (ts, (_, ty)) = lookup pos x env in
   try
     substitute (List.combine ts tys) ty
-  with _ ->
+  with e ->
     raise (InvalidTypeApplication pos)
 
 and expression env = function
