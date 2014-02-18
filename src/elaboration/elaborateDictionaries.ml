@@ -14,6 +14,7 @@ let rec program p = handle_error List.(fun () ->
   flatten (fst (Misc.list_foldmap block ElaborationEnvironment.initial p))
 )
 
+(* on veut une liste de block, avec le bon env *)
 and block env = function
   | BTypeDefinitions ts ->
     let env = type_definitions env ts in
@@ -24,26 +25,83 @@ and block env = function
     ([BDefinition d], env)
 
   | BClassDefinition c ->
-    let env = class_definition env c in
-    ([BClassDefinition c], env)
+    class_definition env c
 
-  | BInstanceDefinitions is ->
-    let env = instance_definitions env is in
-    ([BInstanceDefinitions is], env)
+  | BInstanceDefinitions is -> ([], env)
+    (*let value_binding = instance_definitions env is in
+    block env (BDefinition value_binding)*)
+
+and concat_tname str (TName tname) = TName (str ^ tname)
 
 and class_definition env c =
-  Format.printf "Defining class %s\n" (match c with {class_name=TName name} -> name);
-  bind_class c.class_name c env
+  let env = bind_class c.class_name c env in
 
-and instance_definitions env is =
-  List.fold_left instance_definition env is
+  let record_type = DRecordType ([c.class_parameter], c.class_members) in
+  let type_def = TypeDef (
+    c.class_position,
+    KArrow (KStar, KStar),
+    concat_tname "class_" c.class_name,
+    record_type)
+  in
+  let type_defs = TypeDefs (c.class_position, [type_def]) in
+  let env = type_definitions env type_defs in
+  Format.printf "type class definition ok\n";
+
+  let class_members = List.map (class_member c) c.class_members in
+  let value_defs, env = Misc.list_foldmap value_definition env class_members in
+  let value_binding = BindValue (c.class_position, value_defs) in
+  Format.printf "class_definition ok\n";
+
+  ([BTypeDefinitions type_defs; BDefinition value_binding], env)
+    
+and class_member c (pos, LName name, ty) =
+  let inst_ty =
+    TyApp (pos, concat_tname "class_" c.class_name,
+	   [TyVar (pos, c.class_parameter)])
+  in
+  let t_args, t_res = destruct_ntyarrow ty in
+  let new_ty = ntyarrow pos (inst_ty :: t_args) t_res in
+  let value_def =
+    ValueDef (
+      pos, [c.class_parameter], [], (Name name, new_ty),
+      EForall (
+	pos,
+	[c.class_parameter],
+	ELambda (
+	  pos, (Name "inst", inst_ty),
+	  ERecordAccess (
+	    pos, EVar (pos, Name "inst", []), LName name))))
+  in
+  value_def
+	      
+
+(*and instance_definitions env is =
+  BindValue (i.instance_position, List.map (instance_definition env) is)
 
 and instance_definition env i =
+  (* we have types *)
   let i_class = lookup_class i.instance_position i.instance_class_name env in
-  (*Format.printf "Instanciating class %s\n" (match i_class with {class_name=TName name} -> name);
-  Format.printf "\t with index %s\n" (match i.instance_index with TName name -> name);*)
-  List.fold_left (fun acc (_, LName name, ty) ->
-    bind_scheme (Name name) i.instance_parameters ty acc) env i_class.class_members
+  (* class type is a pair type_kind * type_def *)
+  let i_class_type = lookup_type i.instance_position i.instance_class_name env in
+  (* what the fuck is this name ? *)
+  let record_exp =
+    ERecordCon (
+      i.instance_position,
+      ?,
+      [i.instance_index],
+      i.instance_members)
+  in
+  (* we must lookup for expected type *)
+  let value_def =
+    ValueDef (
+      i.instance_position,
+      [i_class.class_parameter],
+      i.instance_typing_context,
+      ?,
+      record_exp)
+  in
+  value_def*)
+  
 					    
 and type_definitions env (TypeDefs (_, tdefs)) =
   let env = List.fold_left env_of_type_definition env tdefs in
@@ -379,8 +437,8 @@ and eforall pos ts e =
 
 and value_definition env (ValueDef (pos, ts, ps, (x, xty), e)) =
   let env = introduce_type_parameters env ts in
+  (*let env = introduce_typing_context env ps in*)
   check_wf_scheme env ts xty;
-
   if is_value_form e then begin
     let e = eforall pos ts e in
     let e, ty = expression env e in
