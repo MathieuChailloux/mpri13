@@ -95,4 +95,7 @@ depend:
 	rm -f .depend
 	$(MAKE) .depend
 
+test: $(EXECUTABLE)
+	cd mytest && $(MAKE)
+
 include .depend
