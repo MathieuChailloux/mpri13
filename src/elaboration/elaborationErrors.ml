@@ -121,3 +121,28 @@ let handle_error f =
       fatal' pos (Printf.sprintf
                    "  Identifier `%s' cannot be both overloaded and let-bound."
                    x)
+    | UnboundInstance (pos, (TName n1, TName n2)) ->
+      fatal' pos (Printf.sprintf
+                   "  Instance %s %s is unbound."
+                   n1 n2)
+
+    | AlreadyDefinedInstance  (pos, (TName n1, TName n2)) ->
+      fatal' pos (Printf.sprintf
+                   "  Instance %s %s is already defined."
+                   n1 n2)
+
+    | AlreadyDefinedMember (pos, LName n, _, _) ->
+      fatal' pos (Printf.sprintf
+                    "  Member  %s is already defined."
+                    n)
+
+    | UnboundRecord (pos, LName n) ->
+      fatal' pos (Printf.sprintf
+                    "  Member %s is not bound by the class."
+                    n)
+
+    | AlreadyDefinedSymbol (pos, Name n) ->
+      fatal' pos (Printf.sprintf
+                    "  The symbol %s is already defined."
+                    n)
+      

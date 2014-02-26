@@ -109,3 +109,4 @@ let initial =
     (TName "unit", KStar)
   ]
 
+let get_classes env = List.map snd env.classes

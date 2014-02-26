@@ -50,7 +50,7 @@ OFLAGS = -g $(INCLUDES)
 BLIBS  = $(PPRINT)/_build/PPrintLib.cma
 OLIBS  = $(PPRINT)/_build/PPrintLib.cmxa
 
-OCAMLC = ocamlc
+OCAMLC = ocamlc -annot
 OCAMLOPT = ocamlopt
 OCAMLDEP = ocamldep
 OCAMLLEX = ocamllex

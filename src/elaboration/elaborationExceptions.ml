@@ -33,5 +33,6 @@ exception OverloadedSymbolCannotBeBound of Positions.position * name
 exception UnboundInstance of position * (tname * tname)
 exception AlreadyDefinedInstance of position * (tname * tname)
 exception AlreadyDefinedMember of position * lname * position * lname
+exception AlreadyDefinedSymbol of position * name
 exception InvalidClassParameter of position * tname * tname
 exception UnboundRecord of position * lname

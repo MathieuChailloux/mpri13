@@ -109,7 +109,19 @@ and class_checking env c =
 	  raise (AlreadyDefinedMember (pos, n, s_pos, s_n))
       ) all_supermembers
     )
-    c.class_members
+    c.class_members;
+
+  (* Are the members identifiers already used as values ? *)
+  List.iter (fun (pos, LName n, _) ->
+    check_value_already_defined pos (Name n) env
+  ) c.class_members
+
+and check_value_already_defined pos x env =
+  try
+    ignore (lookup pos x env);
+    raise (AlreadyDefinedSymbol (pos, x))
+  with 
+    UnboundIdentifier _ -> ()
 
 and class_definition env c =
   class_checking env c;
@@ -193,51 +205,6 @@ and check_instance_definition env i =
   List.iter 
     (fun s_i -> ignore (lookup_instance i.instance_position (s_i, i.instance_index) env))
     (lookup_class i.instance_position i.instance_class_name env).superclasses;
-  
-  (* check instance members *)
-  let () = 
-    (* We start by sorting out the members *)
-    let ins_members =
-      List.sort (fun (RecordBinding (LName n1, _)) (RecordBinding (LName n2, _)) -> compare n1 n2)
-	i.instance_members
-    in
-    let class_members = 
-      List.sort (fun (_, LName n1, _) (_, LName n2, _) -> compare n1 n2)
-	(lookup_class i.instance_position i.instance_class_name env).class_members
-    in
-    (*let rec check_members = function
-      | [], [] -> ()
-      | [], (_, _, ty)::_ -> raise (RecordExpected (i.instance_position, ty))
-      | RecordBinding (n1, expr)::_, [] -> 
-	raise (UnboundRecord (get_position expr, n1))
-      | RecordBinding (n1, expr)::t, (pos, n2, ty)::t2 ->
-	if n1 <> n2 then
-	  raise (RecordExpected (get_position expr, ty));
-	let c = lookup_class i.instance_position i.instance_class_name env in
-	
-	(* Faut que je modifie l'expression *)
-	let class_preds = !curr_class_preds in
-	curr_class_preds := i.instance_typing_context @ class_preds;
-	Format.printf "a1\n";
-	let _ , m_ty = expression env expr in
-	Format.printf "a2\n";
-	curr_class_preds := class_preds;
-	
-	(* to check : arity etc => à voir *)
-	let i_ty = 
-	  let type_parameters =
-	    List.map (fun tname -> TyVar (i.instance_position, tname)) i.instance_parameters in
-	  TyApp (i.instance_position, i.instance_index, type_parameters)
-	in
-	let ty = substitute [c.class_parameter, i_ty] ty in
-	if equivalent ty m_ty then
-	  check_members (t, t2)
-	else 
-	  raise (IncompatibleTypes (get_position expr, ty, m_ty))
-    in
-    check_members (ins_members, class_members)*)
-    ()
-  in
   
   (* is_canonical ? 
      = Checks there aren't two equal instance predicates that binds the same type
@@ -726,9 +693,20 @@ and add_predicates_to_type ?preds pos ty =
   ) (match preds with None -> !curr_class_preds | Some ps -> ps) in
   ntyarrow pos (preds_tys @ args_tys) res_ty
 
+and check_method_already_defined pos ((Name n) as name) env = 
+  List.iter
+    (fun c ->
+      List.iter (fun (pos, LName n', _) ->
+	if n' = n then
+	  raise (AlreadyDefinedSymbol (pos, name))
+      ) c.class_members
+    )
+    (get_classes env);
+
 and value_definition env (ValueDef (pos, ts, ps, (x, xty), e)) =
   let env' = introduce_type_parameters env ts in
   check_wf_scheme env ts xty;
+
   if is_value_form e then begin
     let e = eforall pos ts e in
 
@@ -736,9 +714,14 @@ and value_definition env (ValueDef (pos, ts, ps, (x, xty), e)) =
     curr_class_preds := ps @ class_preds;
     let e = add_predicates_to_exp pos env e in
     let xty = add_predicates_to_type pos xty in
+    
+    (match awaits_class xty with
+    | [], _ -> check_method_already_defined pos x env
+    | _ -> ()
+    );
 
     let e, ty = expression env' e in
-    
+
     curr_class_preds := class_preds;
 
     let b = (x, ty) in
@@ -746,6 +729,8 @@ and value_definition env (ValueDef (pos, ts, ps, (x, xty), e)) =
     (ValueDef (pos, ts, [], b, EForall (pos, ts, e)),
      bind_scheme x ts ty env)
   end else begin
+    check_method_already_defined pos x env;
+
     if ts <> [] then
       raise (ValueRestriction pos)
     else

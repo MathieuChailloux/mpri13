@@ -126,3 +126,7 @@ exception AlreadyDefinedMember of position * lname * position * lname
 (** [UnboundRecord] is raised when an instance defines a member not
     included by its class. *)
 exception UnboundRecord of position * lname
+
+(** [AlreadyDefinedSymbol] is raised when a symbol is already bound in
+    the environment. *)
+exception AlreadyDefinedSymbol of position * name
