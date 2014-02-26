@@ -98,12 +98,32 @@ let rec kind_of_arity = function
   | 0 -> KStar
   | n -> KArrow (KStar, kind_of_arity (pred n))
 
+let my_print_type t =
+  let rec loop = function
+    | TyVar (_, TName name) ->
+      Format.printf "TyVar %s, " name
+    | TyApp (_, TName name, tys) ->
+      Format.printf "TyApp (%s, " name;
+      List.iter loop tys; Format.printf "),"
+  in
+  loop t; Format.printf "\n"
+
+let rec my_clean_type = function
+  | TyApp (pos, tname, []) -> TyVar (pos, tname)
+  | TyApp (pos, tname, tys) ->
+    TyApp (pos, tname, List.map my_clean_type tys)
+  | t -> t
+
 let rec equivalent ty1 ty2 =
+  (*Format.printf "equivalent t1 t2\n";
+  my_print_type ty1; my_print_type ty2;*)
   match ty1, ty2 with
     | TyVar (_, t), TyVar (_, t') ->
       t = t'
     | TyApp (_, t, tys), TyApp (_, t', tys') ->
       t = t' && List.for_all2 equivalent tys tys'
+    (*| TyVar (_, t), TyApp (_, t', []) -> t = t'
+    | TyApp (_, t, []), TyVar (_, t') -> t = t'*)
     | _, _ ->
       false
 

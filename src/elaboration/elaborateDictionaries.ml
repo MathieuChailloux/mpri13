@@ -7,6 +7,8 @@ open ElaborationErrors
 open ElaborationExceptions
 open ElaborationEnvironment
 
+let curr_class_preds = ref []
+
 let string_of_type ty      = ASTio.(XAST.(to_string pprint_ml_type ty))
 
 
@@ -27,16 +29,94 @@ and block env = function
   | BClassDefinition c ->
     class_definition env c
 
-  | BInstanceDefinitions is -> ([], env)
-    (*let value_binding = instance_definitions env is in
-    block env (BDefinition value_binding)*)
+  | BInstanceDefinitions is ->
+    instance_definitions env is
 
 and concat_tname str (TName tname) = TName (str ^ tname)
+and concat_tname_lname (TName tname) (LName lname) = LName (tname ^ lname)
+and string_of_tname (TName name) = name
+and type_of_class ?arg c =
+  let arg = match arg with None -> c.class_parameter | Some arg_tname -> arg_tname in
+  TyApp (c.class_position, concat_tname "class_" c.class_name,
+	 [TyVar (c.class_position, arg)])
+and type_of_inst pos c i =
+  let param_types = List.map (fun param -> TyVar (pos, param)) i.instance_parameters in
+  TyApp (pos, concat_tname "class_" c.class_name,
+	 [TyApp (pos, i.instance_index, param_types)])
+
+and add_predicate_to_exp pos env class_pred exp =
+  let ClassPredicate (TName cls_name, arg_tname) = class_pred in
+  let c = lookup_class pos (TName cls_name) env in
+  let arg_name = name_of_var arg_tname ^ "_" in
+  let lambda_arg_name = Name ("inst_" ^ arg_name ^ cls_name) in
+  ELambda (
+    pos,
+    (lambda_arg_name, type_of_class ~arg:arg_tname c),
+    exp
+  )
+  
+and add_predicates_to_exp pos env exp =
+  List.fold_right (add_predicate_to_exp pos env) !curr_class_preds exp
+
+
+and add_superclasses_definition env c  =
+  List.fold_left (fun members (TName superclass_name) ->
+    (c.class_position,
+     LName ("superclass_" ^ superclass_name),
+     TyApp (
+       c.class_position,
+       TName ("class_" ^ superclass_name),
+       [TyVar (c.class_position, c.class_parameter)]))
+    :: members)
+    c.class_members
+    c.superclasses
+
+and class_checking env c =
+  (* unrelated class ? *)
+  
+  (* Does the superclasses exist in the environment ? *)
+  List.iter (fun sc -> ignore (is_superclass c.class_position c.class_name sc env) ) 
+    c.superclasses;
+  
+  (* Are the superclasses' parameters equals to ours *)
+  List.iter 
+    (fun sc ->
+      let sc_def = lookup_class c.class_position sc env in
+      let c_param = c.class_parameter in
+      let sc_param = sc_def.class_parameter in
+      if c_param <> sc_param then
+	raise (InvalidClassParameter (c.class_position, c.class_parameter, sc_param))
+    )
+    c.superclasses;
+
+  (* Are the members well-formed ? *)
+  List.iter
+    (function (pos, (LName n), ty) -> 
+      check_wf_scheme env [c.class_parameter] ty;
+    )
+    c.class_members;
+  
+  (* Are the members already defined in the superclasses? *)
+  let all_supermembers = List.concat
+    (List.map
+       (fun scname -> (lookup_class c.class_position scname env).class_members)
+       c.superclasses) 
+  in
+  List.iter
+    (function (pos, n, _) -> 
+      List.iter (fun (s_pos, s_n, _) ->
+	if n = s_n then
+	  raise (AlreadyDefinedMember (pos, n, s_pos, s_n))
+      ) all_supermembers
+    )
+    c.class_members
 
 and class_definition env c =
+  class_checking env c;
   let env = bind_class c.class_name c env in
+  let record_members = add_superclasses_definition env c in
 
-  let record_type = DRecordType ([c.class_parameter], c.class_members) in
+  let record_type = DRecordType ([c.class_parameter], record_members) in
   let type_def = TypeDef (
     c.class_position,
     KArrow (KStar, KStar),
@@ -45,22 +125,18 @@ and class_definition env c =
   in
   let type_defs = TypeDefs (c.class_position, [type_def]) in
   let env = type_definitions env type_defs in
-  Format.printf "type class definition ok\n";
 
   let class_members = List.map (class_member c) c.class_members in
-  let value_defs, env = Misc.list_foldmap value_definition env class_members in
+  let superclasses_accessors = superclasses_accessors env c in
+  let value_defs, env = Misc.list_foldmap value_definition env (class_members @ superclasses_accessors) in
   let value_binding = BindValue (c.class_position, value_defs) in
-  Format.printf "class_definition ok\n";
 
   ([BTypeDefinitions type_defs; BDefinition value_binding], env)
     
 and class_member c (pos, LName name, ty) =
-  let inst_ty =
-    TyApp (pos, concat_tname "class_" c.class_name,
-	   [TyVar (pos, c.class_parameter)])
-  in
+  let class_ty = type_of_class c in
   let t_args, t_res = destruct_ntyarrow ty in
-  let new_ty = ntyarrow pos (inst_ty :: t_args) t_res in
+  let new_ty = ntyarrow pos (class_ty :: t_args) t_res in
   let value_def =
     ValueDef (
       pos, [c.class_parameter], [], (Name name, new_ty),
@@ -68,39 +144,168 @@ and class_member c (pos, LName name, ty) =
 	pos,
 	[c.class_parameter],
 	ELambda (
-	  pos, (Name "inst", inst_ty),
+	  pos, (Name "inst", class_ty),
 	  ERecordAccess (
 	    pos, EVar (pos, Name "inst", []), LName name))))
   in
   value_def
-	      
 
-(*and instance_definitions env is =
-  BindValue (i.instance_position, List.map (instance_definition env) is)
-
-and instance_definition env i =
-  (* we have types *)
-  let i_class = lookup_class i.instance_position i.instance_class_name env in
-  (* class type is a pair type_kind * type_def *)
-  let i_class_type = lookup_type i.instance_position i.instance_class_name env in
-  (* what the fuck is this name ? *)
-  let record_exp =
-    ERecordCon (
-      i.instance_position,
-      ?,
-      [i.instance_index],
-      i.instance_members)
-  in
-  (* we must lookup for expected type *)
+and superclass_accessor c superclass =
+  let pos = c.class_position in
+  let class_ty = type_of_class c in
+  let superclass_ty = type_of_class superclass in
+  let accessor_ty = ntyarrow pos [class_ty] superclass_ty in
+  let TName class_name = c.class_name in
+  let TName superclass_name = superclass.class_name in
+  let TName superclass_field = concat_tname "superclass_" superclass.class_name in
+  let accessor_name = "superclass_" ^ superclass_name ^ "_" ^ class_name in
   let value_def =
     ValueDef (
-      i.instance_position,
-      [i_class.class_parameter],
+      pos, [c.class_parameter], [], (Name accessor_name, accessor_ty),
+      EForall (
+	pos,
+	[c.class_parameter],
+	ELambda (
+	  pos, (Name "inst", class_ty),
+	  ERecordAccess (
+	    pos,
+	    EVar (pos, Name "inst", []),
+	    LName superclass_field
+	  )
+	)
+      )
+    )
+  in
+  value_def
+
+and superclasses_accessors env c =
+  List.map (fun superclass_name ->
+    let superclass = lookup_class c.class_position superclass_name env in
+    superclass_accessor c superclass) c.superclasses
+  
+	      
+and check_instance_definition env i =
+  (* We check that for each superclass of the instanciated class,
+     there exists an instance of that index.
+     i.e : Eq 'a => Ord 'a
+     Ord int requires Eq int
+  *)
+  List.iter 
+    (fun s_i -> ignore (lookup_instance i.instance_position (s_i, i.instance_index) env))
+    (lookup_class i.instance_position i.instance_class_name env).superclasses;
+  
+  (* check instance members *)
+  let () = 
+    (* We start by sorting out the members *)
+    let ins_members =
+      List.sort (fun (RecordBinding (LName n1, _)) (RecordBinding (LName n2, _)) -> compare n1 n2)
+	i.instance_members
+    in
+    let class_members = 
+      List.sort (fun (_, LName n1, _) (_, LName n2, _) -> compare n1 n2)
+	(lookup_class i.instance_position i.instance_class_name env).class_members
+    in
+    (*let rec check_members = function
+      | [], [] -> ()
+      | [], (_, _, ty)::_ -> raise (RecordExpected (i.instance_position, ty))
+      | RecordBinding (n1, expr)::_, [] -> 
+	raise (UnboundRecord (get_position expr, n1))
+      | RecordBinding (n1, expr)::t, (pos, n2, ty)::t2 ->
+	if n1 <> n2 then
+	  raise (RecordExpected (get_position expr, ty));
+	let c = lookup_class i.instance_position i.instance_class_name env in
+	
+	(* Faut que je modifie l'expression *)
+	let class_preds = !curr_class_preds in
+	curr_class_preds := i.instance_typing_context @ class_preds;
+	Format.printf "a1\n";
+	let _ , m_ty = expression env expr in
+	Format.printf "a2\n";
+	curr_class_preds := class_preds;
+	
+	(* to check : arity etc => à voir *)
+	let i_ty = 
+	  let type_parameters =
+	    List.map (fun tname -> TyVar (i.instance_position, tname)) i.instance_parameters in
+	  TyApp (i.instance_position, i.instance_index, type_parameters)
+	in
+	let ty = substitute [c.class_parameter, i_ty] ty in
+	if equivalent ty m_ty then
+	  check_members (t, t2)
+	else 
+	  raise (IncompatibleTypes (get_position expr, ty, m_ty))
+    in
+    check_members (ins_members, class_members)*)
+    ()
+  in
+  
+  (* is_canonical ? 
+     = Checks there aren't two equal instance predicates that binds the same type
+     => voir le typing_context
+  *)
+  
+  (* elaboration ?? *)
+  
+  ()  
+
+
+and instance_definitions env is =
+  (* definitions are recursive thus we extend the typing environment *)
+  let env = List.fold_left bind_instance env is in
+  List.iter (check_instance_definition env) is;
+
+  let value_defs = List.map (instance_definition env) is in
+  block env (BDefinition (BindRecValue (undefined_position, value_defs)))
+
+and fresh_instance_name =
+  let r = ref 0 in
+  fun () -> incr r; Name ("_instance_" ^ string_of_int !r)
+
+and add_superclasses_fields env i =
+  let pos = i.instance_position in
+  let i_class = lookup_class pos i.instance_class_name env in
+  let TName index_name = i.instance_index in
+  List.fold_left (fun record_bindings (TName superclass_name) ->
+    let rb = RecordBinding (
+      LName ("superclass_" ^ superclass_name),
+      EVar (pos,
+	    Name (index_name ^ "_class_" ^ superclass_name),
+      List.map (fun tname -> TyVar (pos, tname)) i.instance_parameters)
+    ) in
+    rb :: record_bindings) i.instance_members i_class.superclasses
+    
+
+and instance_definition env i =
+  let instance_members = add_superclasses_fields env i in
+  let pos = i.instance_position in
+  let i_class = lookup_class pos i.instance_class_name env in
+  let param_types = List.map (fun param -> TyVar (pos, param)) i.instance_parameters in
+  let inst_ty = TyApp (pos, concat_tname "class_" i_class.class_name,
+    [TyApp (pos, i.instance_index, param_types)]) in
+  let record_exp =
+    EForall (
+      pos,
+      i.instance_parameters,
+      ERecordCon (
+	pos,
+	fresh_instance_name (),
+	[TyApp (pos, i.instance_index, param_types)],
+	instance_members))
+  in
+  let name = Name (
+    Printf.sprintf "%s_class_%s"
+      (string_of_tname i.instance_index)
+      (string_of_tname i.instance_class_name)) in
+  let value_def =
+    ValueDef (
+      pos,
+      i.instance_parameters,
       i.instance_typing_context,
-      ?,
+      (name, inst_ty),
       record_exp)
   in
-  value_def*)
+  (*value_definition env value_def*)
+  value_def
   
 					    
 and type_definitions env (TypeDefs (_, tdefs)) =
@@ -166,7 +371,8 @@ and check_equivalent_kind pos k1 k2 =
     | _ ->
       raise (IncompatibleKinds (pos, k1, k2))
 
-and env_of_bindings env cdefs = List.(
+and env_of_bindings env cdefs =
+  List.(
   (function
     | BindValue (_, vs)
     | BindRecValue (_, vs) ->
@@ -190,19 +396,98 @@ and type_application pos env x tys =
   with e ->
     raise (InvalidTypeApplication pos)
 
+(* Symbols resolution *)
+
+and awaits_class ty =
+  match ty with
+  | TyApp (_, TName "->", [TyApp (_, TName class_name, [arg]); rem_ty ]) ->
+    if String.length class_name > 6 && String.sub class_name 0 6 = "class_" then
+      let (res_list, rem_ty2) = awaits_class rem_ty in
+      ((String.sub class_name 6 ((String.length class_name) - 6), arg) :: res_list, rem_ty2)
+    else
+      [], ty
+  | _ -> [], ty
+
+and find_class_path pos env ?arg_tname class_name =
+  let class_tname = TName class_name in
+  let ClassPredicate (TName pred_cls_name, _) =
+    try
+      List.find (fun (ClassPredicate (ctname, arg_tname)) ->
+	ctname = class_tname || is_superclass pos class_tname ctname env) !curr_class_preds
+    with
+    | Not_found -> failwith "No predicate oO"
+  in
+  let c = lookup_class pos (TName pred_cls_name) env in
+
+  let rec loop c exp =
+    if c.class_name = class_tname then
+      exp
+    else
+      try
+	let sc_tname = List.find (fun tname ->
+	  tname = class_tname || is_superclass pos class_tname tname env) c.superclasses in
+	let TName sc_name = sc_tname in
+	let TName c_name = c.class_name in
+	let sc = lookup_class pos sc_tname env in
+	loop sc (EApp (pos, EVar (pos, Name ("superclass_" ^ sc_name ^ "_" ^ c_name), []), exp))
+      with
+      | Not_found -> assert false
+  in
+  
+  let arg_name = match arg_tname with | None -> "" | Some tname -> name_of_var tname ^ "_" in
+  
+  loop c (EVar (pos, Name ("inst_" ^ arg_name ^ pred_cls_name), []))
+
+
+and name_of_var (TName var_name) =
+  assert (String.length var_name = 2);
+  String.sub var_name 1 1
+
+and resolve_symbol pos env sym ty e =
+  match awaits_class ty with
+  | [], _ -> e, ty
+  | [(class_name, arg_ty)] , rem_ty ->
+    begin
+      match arg_ty with
+      | TyVar (_, arg_tname) ->
+	EApp (pos, e, find_class_path pos env ~arg_tname:arg_tname class_name), rem_ty
+      | TyApp (_, TName index, []) ->
+	(EApp (pos, e, EVar (pos, Name (index ^ "_class_" ^ class_name), [])), rem_ty)
+      | TyApp (_, TName index, [TyVar (_, var_tname)]) ->
+	let inst_exp_name = index ^ "_class_" ^ class_name in
+	let (ty_binders, (_, inst_ty)) = lookup pos (Name inst_exp_name) env in
+	begin
+	  match awaits_class inst_ty with
+	  | [], _ ->
+	    EApp (pos, e, EVar (pos, Name inst_exp_name, [TyVar (pos, var_tname)])), rem_ty
+	  | [(c2_name, _)], _ ->
+	    EApp (pos, e,
+		  EApp (pos,
+			EVar (pos, Name inst_exp_name, [TyVar (pos, var_tname)]),
+			EVar (pos, Name ("inst_" ^ (name_of_var var_tname) ^ "_" ^ c2_name), []))),
+	    rem_ty
+	  | _ -> failwith "Multiple class arguments : todo also\n"
+	end
+      | _ -> failwith "Unexpected type form in resolve_symbol\n";
+    end
+  | _ -> failwith "Multiple class arguments : todo\n"
+	
+
+
 and expression env = function
-  | EVar (pos, ((Name s) as x), tys) ->
-    (EVar (pos, x, tys), type_application pos env x tys)
+  | EVar (pos, ((Name s) as x), tys) as e ->
+    let ty = type_application pos env x tys in
+    resolve_symbol pos env s ty e
 
   | ELambda (pos, ((x, aty) as b), e') ->
     check_wf_type env KStar aty;
     let env = bind_simple x aty env in
-    let (e, ty) = expression env e' in
+    let (e, ty) = expression env  e' in
     (ELambda (pos, b, e), ntyarrow pos [aty] ty)
 
   | EApp (pos, a, b) ->
-    let a, a_ty = expression env a in
-    let b, b_ty = expression env b in
+    let a, a_ty = expression env  a in
+    let b, b_ty = expression env  b in
     begin match destruct_tyarrow a_ty with
       | None ->
         raise (ApplicationToNonFunctional pos)
@@ -213,7 +498,7 @@ and expression env = function
 
   | EBinding (pos, vb, e) ->
     let vb, env = value_binding env vb in
-    let e, ty = expression env e in
+    let e, ty = expression env  e in
     (EBinding (pos, vb, e), ty)
 
   | EForall (pos, tvs, e) ->
@@ -221,14 +506,14 @@ and expression env = function
     raise (OnlyLetsCanIntroduceTypeAbstraction pos)
 
   | ETypeConstraint (pos, e, xty) ->
-    let e, ty = expression env e in
+    let e, ty = expression env  e in
     check_equal_types pos ty xty;
     (e, ty)
 
   | EExists (_, _, e) ->
     (** Because we are explicitly typed, flexible type variables
         are useless. *)
-    expression env e
+    expression env  e
 
   | EDCon (pos, DName x, tys, es) ->
     let ty = type_application pos env (Name x) tys in
@@ -238,7 +523,7 @@ and expression env = function
     else
       let es =
         List.map2 (fun e xty ->
-          let (e, ty) = expression env e in
+          let (e, ty) = expression env  e in
           check_equal_types pos ty xty;
           e
         ) es itys
@@ -246,7 +531,7 @@ and expression env = function
       (EDCon (pos, DName x, tys, es), oty)
 
   | EMatch (pos, s, bs) ->
-    let (s, sty) = expression env s in
+    let (s, sty) = expression env  s in
     let bstys = List.map (branch env sty) bs in
     let bs = fst (List.split bstys) in
     let tys = snd (List.split bstys) in
@@ -255,7 +540,7 @@ and expression env = function
     (EMatch (pos, s, bs), ty)
 
   | ERecordAccess (pos, e, l) ->
-    let e, ty = expression env e in
+    let e, ty = expression env  e in
     let (ts, lty, rtcon) = lookup_label pos l env in
     let ty =
       match ty with
@@ -353,7 +638,7 @@ and check_same_denv pos denv1 denv2 =
     assert (ts = []); (** Because patterns only bind monomorphic values. *)
     try
       let (_, (_, ty')) = lookup pos x denv2 in
-      check_equal_types pos ty ty'
+      check_equal_types pos ty ty';
     with _ ->
       raise (PatternsMustBindSameVariables pos)
   ) (values denv1)
@@ -410,7 +695,7 @@ and value_binding env = function
 
   | BindRecValue (pos, vs) ->
     let env = List.fold_left value_declaration env vs in
-    let (vs, _) = Misc.list_foldmap value_definition env vs in
+    let (vs, env') = Misc.list_foldmap value_definition env vs in
     (BindRecValue (pos, vs), env)
 
   | ExternalValue (pos, ts, ((x, ty) as b), os) ->
@@ -434,14 +719,28 @@ and eforall pos ts e =
     | _, _ ->
       raise (InvalidNumberOfTypeAbstraction pos)
 
+and add_predicates_to_type ?preds pos ty =
+  let (args_tys, res_ty) = destruct_ntyarrow ty in
+  let preds_tys = List.map (fun (ClassPredicate (cls_tname, arg_tname)) ->
+    TyApp (pos, concat_tname "class_" cls_tname, [TyVar (pos, arg_tname)])
+  ) (match preds with None -> !curr_class_preds | Some ps -> ps) in
+  ntyarrow pos (preds_tys @ args_tys) res_ty
 
 and value_definition env (ValueDef (pos, ts, ps, (x, xty), e)) =
-  let env = introduce_type_parameters env ts in
-  (*let env = introduce_typing_context env ps in*)
+  let env' = introduce_type_parameters env ts in
   check_wf_scheme env ts xty;
   if is_value_form e then begin
     let e = eforall pos ts e in
-    let e, ty = expression env e in
+
+    let class_preds = !curr_class_preds in
+    curr_class_preds := ps @ class_preds;
+    let e = add_predicates_to_exp pos env e in
+    let xty = add_predicates_to_type pos xty in
+
+    let e, ty = expression env' e in
+    
+    curr_class_preds := class_preds;
+
     let b = (x, ty) in
     check_equal_types pos xty ty;
     (ValueDef (pos, ts, [], b, EForall (pos, ts, e)),
@@ -451,14 +750,14 @@ and value_definition env (ValueDef (pos, ts, ps, (x, xty), e)) =
       raise (ValueRestriction pos)
     else
       let e = eforall pos [] e in
-      let e, ty = expression env e in
+      let e, ty = expression env' e in
       let b = (x, ty) in
       check_equal_types pos xty ty;
       (ValueDef (pos, [], [], b, e), bind_simple x ty env)
   end
 
 and value_declaration env (ValueDef (pos, ts, ps, (x, ty), e)) =
-  bind_scheme x ts ty env
+  bind_scheme x ts (add_predicates_to_type ~preds:ps pos ty) env
 
 
 and is_value_form = function
@@ -477,3 +776,17 @@ and is_value_form = function
   | _ ->
     false
 
+
+and get_position = function
+  | EVar (position, _, _)
+  | ELambda (position, _, _)
+  | EApp (position, _, _)
+  | EBinding (position, _, _)
+  | EPrimitive (position, _)
+  | EForall (position, _, _)
+  | EExists (position, _, _)
+  | ETypeConstraint (position, _, _)
+  | EDCon (position, _, _, _)
+  | EMatch (position, _, _)
+  | ERecordAccess (position, _, _)
+  | ERecordCon (position, _, _, _) -> position

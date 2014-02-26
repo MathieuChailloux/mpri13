@@ -11,7 +11,6 @@ exception InvalidTypeApplication of position
 exception InvalidDataConstructorApplication of position
 exception PatternsMustBindSameVariables of position
 exception CannotElaborateDictionary of position * Types.t
-exception UnboundIdentifier of position * name
 exception NonLinearPattern of position
 exception IncompatibleTypes of position * Types.t * Types.t
 exception IncompatibleKinds of position * Types.kind * Types.kind
@@ -30,3 +29,9 @@ exception LabelAlreadyTaken of position * lname
 exception LabelDoesNotBelong of position * lname * tname * tname
 exception InvalidRecordInstantiation of position
 exception OverloadedSymbolCannotBeBound of Positions.position * name
+
+exception UnboundInstance of position * (tname * tname)
+exception AlreadyDefinedInstance of position * (tname * tname)
+exception AlreadyDefinedMember of position * lname * position * lname
+exception InvalidClassParameter of position * tname * tname
+exception UnboundRecord of position * lname

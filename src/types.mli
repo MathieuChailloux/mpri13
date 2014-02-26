@@ -82,3 +82,7 @@ val equivalent : t -> t -> bool
 (** [substitute s ty] returns [ty] on which the substitution [s]
     has been applied. *)
 val substitute : (tname * t) list -> t -> t
+
+(* TO REMOVE LATER *)
+val my_print_type : t -> unit
+val my_clean_type : t -> t

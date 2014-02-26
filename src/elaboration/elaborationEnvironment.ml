@@ -9,9 +9,10 @@ type t = {
   types        : (tname * (Types.kind * type_definition)) list;
   classes      : (tname * class_definition) list;
   labels       : (lname * (tnames * Types.t * tname)) list;
+  instances    : ((tname * tname) * instance_definition) list;
 }
 
-let empty = { values = []; types = []; classes = []; labels = [] }
+let empty = { values = []; types = []; classes = []; labels = []; instances = []; }
 
 let values env = env.values
 
@@ -37,7 +38,7 @@ let lookup_type pos t env =
 
 let lookup_type_kind pos t env =
   fst (lookup_type pos t env)
-
+    
 let lookup_type_definition pos t env =
   snd (lookup_type pos t env)
 
@@ -54,12 +55,32 @@ let bind_class k c env =
   with UnboundClass _ ->
     { env with classes = (k, c) :: env.classes }
 
+let lookup_instance pos (k, idx) env =
+  try 
+    List.assoc (k, idx) env.instances
+  with 
+    | Not_found -> raise (UnboundInstance (pos, (k, idx)))
+
+let bind_instance env = 
+  function { instance_position = pos
+	   ; instance_index = idx
+	   ; instance_class_name = name
+	   ; _ } as i ->
+  try
+    ignore (lookup_instance pos (name, idx) env);
+    raise (AlreadyDefinedInstance (pos, (name, idx)))
+  with UnboundInstance _ ->
+    { env with instances = ((name, idx), i) :: env.instances }
+
 let lookup_superclasses pos k env =
   (lookup_class pos k env).superclasses
 
 let is_superclass pos k1 k2 env =
-  (* Student! This is your job! *)
-  List.mem k1 (lookup_class pos k2 env).superclasses
+  let rec loop k2 = 
+    k1 = k2 || 
+    List.exists loop (lookup_superclasses pos k2 env)
+  in
+  k1 <> k2 && loop k2
 
 let bind_type_variable t env =
   bind_type t KStar (TypeDef (undefined_position, KStar, t, DAlgebraic [])) env

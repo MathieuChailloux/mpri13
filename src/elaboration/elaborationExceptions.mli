@@ -14,12 +14,18 @@ exception UnboundClass of position * tname
 (** [UnboundLabel] is raised if a label is unbound. *)
 exception UnboundLabel of position * lname
 
+(** [UnboundInstance] is raised if an instance is unbound. *)
+exception UnboundInstance of position * (tname * tname)
+
 (** [MultipleLabels] is raised if a label is defined several
     times in a record. *)
 exception MultipleLabels of position * lname
 
 (** [AlreadyDefinedClass] is raised if a class is defined twice. *)
 exception AlreadyDefinedClass of position * tname
+
+(** [AlreadyDefinedInstance] is raised if an instance is defined twice. *)
+exception AlreadyDefinedInstance of position * (tname * tname)
 
 (** [InvalidTypeApplication] is raised if an incorrect number of
     types is applied to a polymorphic term. *)
@@ -107,3 +113,16 @@ exception InvalidRecordInstantiation of position
 (** [OverloadedSymbolCannotBeBound] is raised when an overloaded
     symbol is introduced by a let. *)
 exception OverloadedSymbolCannotBeBound of Positions.position * name
+
+
+(** [InvalidClassParameter] is raised when a class definition
+    parameter isn't equal to its superclass. *)
+exception InvalidClassParameter of position * tname * tname
+
+(** [AlreadyDefinedMember] is raised when a class definition member is
+    already present in one of its superclasses definition. *)
+exception AlreadyDefinedMember of position * lname * position * lname
+
+(** [UnboundRecord] is raised when an instance defines a member not
+    included by its class. *)
+exception UnboundRecord of position * lname
