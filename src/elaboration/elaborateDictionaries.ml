@@ -100,7 +100,7 @@ and class_checking env c =
   let all_supermembers = List.concat
     (List.map
        (fun scname -> (lookup_class c.class_position scname env).class_members)
-       c.superclasses) 
+       c.superclasses)
   in
   List.iter
     (function (pos, n, _) -> 
@@ -206,18 +206,21 @@ and check_instance_definition env i =
     (fun s_i -> ignore (lookup_instance i.instance_position (s_i, i.instance_index) env))
     (lookup_class i.instance_position i.instance_class_name env).superclasses;
   
-  (* is_canonical ? 
-     = Checks there aren't two equal instance predicates that binds the same type
-     => voir le typing_context
-  *)
-  
-  (* elaboration ?? *)
-  
-  ()  
+  check_noncanonical env i.instance_position i.instance_typing_context
 
+and check_noncanonical env pos ctx =
+  let rec step = function
+    | [] -> ()
+    | (ClassPredicate (c_n, _)) :: tl ->
+      List.iter 
+	(fun (ClassPredicate (c_n', _)) -> 
+	  if c_n <> c_n' && is_superclass pos c_n c_n' env then
+	    raise (InvalidOverloading pos)
+	) ctx;
+  in
+  step ctx
 
 and instance_definitions env is =
-  (* definitions are recursive thus we extend the typing environment *)
   let env = List.fold_left bind_instance env is in
   List.iter (check_instance_definition env) is;
 
@@ -340,16 +343,16 @@ and check_equivalent_kind pos k1 k2 =
 
 and env_of_bindings env cdefs =
   List.(
-  (function
-    | BindValue (_, vs)
-    | BindRecValue (_, vs) ->
-      fold_left (fun env (ValueDef (_, ts, _, (x, ty), _)) ->
-        bind_scheme x ts ty env
-      ) env vs
-    | ExternalValue (_, ts, (x, ty), _) ->
-      bind_scheme x ts ty env
-  ) cdefs
-)
+    (function
+      | BindValue (_, vs)
+      | BindRecValue (_, vs) ->
+	fold_left (fun env (ValueDef (_, ts, _, (x, ty), _)) ->
+          bind_scheme x ts ty env
+	) env vs
+      | ExternalValue (_, ts, (x, ty), _) ->
+	bind_scheme x ts ty env
+    ) cdefs
+  )
 
 and check_equal_types pos ty1 ty2 =
   if not (equivalent ty1 ty2) then
@@ -382,7 +385,9 @@ and find_class_path pos env ?arg_tname class_name =
       List.find (fun (ClassPredicate (ctname, arg_tname)) ->
 	ctname = class_tname || is_superclass pos class_tname ctname env) !curr_class_preds
     with
-    | Not_found -> failwith "No predicate oO"
+    | Not_found -> 
+      (* TODO *)
+      failwith "No predicate oO"
   in
   let c = lookup_class pos (TName pred_cls_name) env in
 
@@ -435,7 +440,7 @@ and resolve_symbol pos env sym ty e =
 	    rem_ty
 	  | _ -> failwith "Multiple class arguments : todo also\n"
 	end
-      | _ -> failwith "Unexpected type form in resolve_symbol\n";
+     | _ -> failwith "Unexpected type form in resolve_symbol\n"
     end
   | _ -> failwith "Multiple class arguments : todo\n"
 	
@@ -703,10 +708,24 @@ and check_method_already_defined pos ((Name n) as name) env =
     )
     (get_classes env);
 
+and is_class_app pos env ty =
+  match ty with
+    | TyApp (_, TName n, [_]) ->
+      if String.length n > 6 && String.sub n 0 6 = "class_" then true
+      else false
+    | _ -> false
+
 and value_definition env (ValueDef (pos, ts, ps, (x, xty), e)) =
   let env' = introduce_type_parameters env ts in
   check_wf_scheme env ts xty;
 
+  check_noncanonical env pos ps;
+  begin
+    if not (is_class_app pos env xty) then
+      match destruct_tyarrow xty, ps with
+	| None, [_] -> raise (InvalidOverloading pos)
+	| _ -> ()
+  end;
   if is_value_form e then begin
     let e = eforall pos ts e in
 
@@ -715,11 +734,12 @@ and value_definition env (ValueDef (pos, ts, ps, (x, xty), e)) =
     let e = add_predicates_to_exp pos env e in
     let xty = add_predicates_to_type pos xty in
     
-    (match awaits_class xty with
-    | [], _ -> check_method_already_defined pos x env
-    | _ -> ()
-    );
-
+    begin 
+      match awaits_class xty with
+	| [], _ -> check_method_already_defined pos x env
+	| _ -> ()
+    end;
+    
     let e, ty = expression env' e in
 
     curr_class_preds := class_preds;
@@ -742,6 +762,7 @@ and value_definition env (ValueDef (pos, ts, ps, (x, xty), e)) =
   end
 
 and value_declaration env (ValueDef (pos, ts, ps, (x, ty), e)) =
+  check_noncanonical env pos ps;
   bind_scheme x ts (add_predicates_to_type ~preds:ps pos ty) env
 
 
@@ -775,3 +796,4 @@ and get_position = function
   | EMatch (position, _, _)
   | ERecordAccess (position, _, _)
   | ERecordCon (position, _, _, _) -> position
+
