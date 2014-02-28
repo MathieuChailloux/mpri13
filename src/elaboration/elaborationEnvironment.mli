@@ -68,6 +68,9 @@ val bind_label : position -> lname -> tnames -> Types.t -> tname -> t -> t
     the record type constructor of the label [l] in [e]. *)
 val lookup_label : position -> lname -> t -> tnames * Types.t * tname
 
+(** [labels_of rtcon e] returns all the labels of the record [rtcon]. *)
+val labels_of : tname -> t -> lname list
+
 (** [get_classes e] returns all the classes defined in the
     environement [e] *)
 val get_classes : t -> class_definition list

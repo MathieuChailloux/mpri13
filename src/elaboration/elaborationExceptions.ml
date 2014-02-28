@@ -29,6 +29,7 @@ exception LabelAlreadyTaken of position * lname
 exception LabelDoesNotBelong of position * lname * tname * tname
 exception InvalidRecordInstantiation of position
 exception OverloadedSymbolCannotBeBound of Positions.position * name
+exception InvalidRecordConstruction of position
 
 exception UnboundInstance of position * (tname * tname)
 exception AlreadyDefinedInstance of position * (tname * tname)
@@ -36,3 +37,6 @@ exception AlreadyDefinedMember of position * lname * position * lname
 exception AlreadyDefinedSymbol of position * name
 exception InvalidClassParameter of position * tname * tname
 exception UnboundRecord of position * lname
+
+
+
